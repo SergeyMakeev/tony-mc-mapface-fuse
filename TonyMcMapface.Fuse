@@ -1,0 +1,124 @@
+--
+-- Tony McMapface display transform function
+-- Takes HDR Rec.709/sRGB stimulus, and maps it to LDR
+--
+-- DaVinci Resolve Fuse made by Sergey Makeev
+-- 
+
+-----------------------------------------------------------------------------------------------
+FuRegisterClass("TonyMcMapface", CT_Tool, {
+  REGS_Category = "Custom Fuses",
+  REGS_OpIconString = "fTm",
+  REGS_OpDescription = "Takes HDR Rec.709/sRGB stimulus, and maps it to LDR",
+})
+
+-----------------------------------------------------------------------------------------------
+function Create()
+  InExposure = self:AddInput("Exposure Compensation", "Exposure", {
+    LINKID_DataType = "Number",
+    INPID_InputControl = "SliderControl",
+    INP_Default = 0,
+    INP_MinScale = -10.0,
+    INP_MaxScale = 10.0,
+  })			
+
+  InImage = self:AddInput("Input", "Input", {
+    LINKID_DataType = "Image",
+    LINK_Main = 1,
+  })
+
+  InLUT = self:AddInput("LUT", "LUT", {
+    LINKID_DataType = "Image",
+    LINK_Main = 2,
+  })
+
+  OutImage = self:AddOutput("Output", "Output", {
+    LINKID_DataType = "Image",
+    LINK_Main = 1,
+  })				
+end
+
+-----------------------------------------------------------------------------------------------
+function Process(req) 
+  local imgLUT = InLUT:GetValue(req)
+  local img = InImage:GetValue(req)
+  local out = Image({IMG_Like = img})
+
+  local exposure = InExposure:GetValue(req).Value
+  exposure = math.pow(2, exposure)
+
+  out:MultiProcessPixels(nil, {exp=exposure, lut=imgLUT}, 0,0, img.Width, img.Height, img, function (x,y,p)
+
+    -- apply exposure
+    local stimulusR = p.R * exp
+    local stimulusG = p.G * exp
+    local stimulusB = p.B * exp
+
+    --
+    -- https://github.com/h3r2tic/tony-mc-mapface/blob/main/shader/tony_mc_mapface.hlsl
+    --
+    local encodedR = stimulusR / (stimulusR + 1.0)
+    local encodedG = stimulusG / (stimulusG + 1.0)
+    local encodedB = stimulusB / (stimulusB + 1.0)
+
+    -- compute UVs
+    local LUT_DIMS = 48.0
+    local ux = encodedR * ((LUT_DIMS - 1.0) / LUT_DIMS) + 0.5 / LUT_DIMS
+    local uy = encodedG * ((LUT_DIMS - 1.0) / LUT_DIMS) + 0.5 / LUT_DIMS
+    local uz = encodedB * ((LUT_DIMS - 1.0) / LUT_DIMS) + 0.5 / LUT_DIMS
+
+    uy = 1.0 - uy
+
+    -- UVs to pixels
+    local px = ux * LUT_DIMS
+    local py = uy * LUT_DIMS
+    local pz = uz * LUT_DIMS
+
+    -- integer part
+    local iz = math.floor(pz)
+
+    -- fractional part
+    local fz = pz - iz
+
+    -- compute 2D pixel coordinates
+    local x1 = iz * LUT_DIMS + px
+    local x2 = (iz+1) * LUT_DIMS + px
+    local y = py
+
+    -- fetch from LUT
+    local sp1 = Pixel()
+    lut:SamplePixelD(x1, y, sp1)
+    local sp2 = Pixel()
+    lut:SamplePixelD(x2, y, sp2)
+
+    -- blend two samples together (to emulate tex3D)
+    local linearR = sp1.R * (1 - fz) + sp2.R * fz
+    local linearG = sp1.G * (1 - fz) + sp2.G * fz
+    local linearB = sp1.B * (1 - fz) + sp2.B * fz
+
+    -- convert from Linear to sRGB
+    local srgbR = linearR * 12.92
+    local srgbG = linearG * 12.92
+    local srgbB = linearB * 12.92
+
+    if (linearR > 0.0031308) then
+      srgbR = 1.055 * math.pow(linearR, 1.0 / 2.4) - 0.055;    
+    end
+
+    if (linearG > 0.0031308) then
+      srgbG = 1.055 * math.pow(linearG, 1.0 / 2.4) - 0.055;    
+    end
+
+    if (linearB > 0.0031308) then
+      srgbB = 1.055 * math.pow(linearB, 1.0 / 2.4) - 0.055;    
+    end
+
+    -- Output result
+    p.R = srgbR
+    p.G = srgbG
+    p.B = srgbB
+    return p
+  end)
+
+  OutImage:Set(req, out)
+end
