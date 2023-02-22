@@ -61,6 +61,20 @@ function Process(req)
     local encodedG = stimulusG / (stimulusG + 1.0)
     local encodedB = stimulusB / (stimulusB + 1.0)
 
+    -- clip negative values
+    if encodedR < 0 then
+      encodedR = 0
+    end
+
+    if encodedG < 0 then
+      encodedG = 0
+    end
+
+    if encodedB < 0 then
+      encodedB = 0
+    end
+
+
     -- compute UVs
     local LUT_DIMS = 48.0
     local ux = encodedR * ((LUT_DIMS - 1.0) / LUT_DIMS) + 0.5 / LUT_DIMS
