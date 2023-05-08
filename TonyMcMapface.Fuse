@@ -89,10 +89,10 @@ function Process(req)
     local pz = uz * LUT_DIMS
 
     -- integer part
-    local iz = math.floor(pz)
+    local iz = math.floor(pz - 0.5)
 
     -- fractional part
-    local fz = pz - iz
+    local fz = pz - 0.5 - iz
 
     -- compute 2D pixel coordinates
     local x1 = iz * LUT_DIMS + px
